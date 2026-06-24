@@ -1,6 +1,9 @@
 # Generated EDA artifacts (regenerate with: python -m src.eda.run_eda --tsne)
 eda_outputs/
 
+# Generated model artifacts (regenerate with: python -m src.model.train_ann)
+model_outputs/
+
 # Python
 __pycache__/
 *.py[cod]
