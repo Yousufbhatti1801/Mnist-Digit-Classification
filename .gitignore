@@ -1,0 +1,12 @@
+# Generated EDA artifacts (regenerate with: python -m src.eda.run_eda --tsne)
+eda_outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
