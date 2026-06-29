@@ -1,4 +1,18 @@
+# Core ML stack
 numpy>=1.24
-matplotlib>=3.7
-scikit-learn>=1.3
-torch>=2.0
+tensorflow>=2.16        # Keras 3 ships inside TF; provides keras.Sequential, etc.
+scikit-learn>=1.3       # classification_report / confusion_matrix in evaluation
+matplotlib>=3.7         # learning curves, confusion matrix, misclassified grid
+
+# Inference / image handling
+pillow>=10.0            # decode uploads + resize arbitrary images to 28x28
+
+# API
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9 # required by FastAPI for multipart file uploads
+pydantic>=2.0
+
+# Test (optional)
+pytest>=7.0
+httpx>=0.24             # backs fastapi.testclient.TestClient in tests/test_api.py

@@ -1,23 +1,51 @@
 # MNIST Digit Classification
 
-Handwritten-digit classification on the classic MNIST dataset. This repo contains
-two pipelines: an **exploratory data analysis (EDA) pipeline** that establishes a
-data baseline, and a **model-training pipeline** that trains a regularized
-fully-connected ANN (MLP) end-to-end.
+Handwritten-digit classification on the classic MNIST dataset, packaged as a
+production-style, modular project: a Keras/TensorFlow fully-connected ANN (MLP)
+with a complete **training + evaluation pipeline**, a **FastAPI** inference
+backend, and a **clean draw-a-digit web UI**.
 
-## Layout
+The trained MLP reaches **~98% test accuracy** (the current run is 98.09%).
+
+## Architecture
 
 ```
-data/archive (1)/        # raw MNIST IDX files (tracked in git)
-src/eda/
-  ├── idx_loader.py      # robust IDX/ubyte loader (flat + nested layouts)
-  └── run_eda.py         # full EDA pipeline → report + figures
-src/model/
-  └── train_ann.py       # ANN/MLP training pipeline → model + metrics + figures
-eda_outputs/             # generated EDA report + figures (gitignored)
-model_outputs/           # generated model, metrics, figures, report (gitignored)
-requirements.txt
+mnist_classifier/                # importable library — the source of truth
+├── config.py                    # one Config dataclass (env-overridable) for everything
+├── data/
+│   ├── idx_loader.py            # robust IDX/ubyte loader (flat + nested layouts)
+│   └── preprocess.py            # flatten + normalize + stratified split
+├── models/
+│   └── mlp.py                   # Keras Sequential MLP factory
+├── training/
+│   ├── train.py                 # end-to-end training pipeline  -> train(config)
+│   ├── evaluate.py              # retrain-free evaluation        -> evaluate(config)
+│   └── reporting.py             # shared figures + markdown reports
+└── inference/
+    └── predictor.py             # load-once Predictor for serving (handles any image)
+
+scripts/                         # thin CLI entrypoints over the library
+├── train.py                     # python -m scripts.train
+└── evaluate.py                  # python -m scripts.evaluate
+
+api/                             # FastAPI backend
+├── main.py                      # /health, /predict, /predict/canvas, / (UI)
+└── schemas.py                   # pydantic request/response models
+
+ui/index.html                    # canvas draw-a-digit UI (served by the API)
+
+src/eda/                         # exploratory data analysis pipeline (unchanged)
+data/archive (1)/                # raw MNIST IDX files (tracked in git)
+model_outputs/                   # trained model + metrics + figures (gitignored)
+eda_outputs/                     # EDA report + figures (gitignored)
 ```
+
+Why this shape: each layer has one job and no circular knowledge. The same
+`config.Config` drives the library, CLI, and API; the same `Predictor`
+preprocessing serves every caller, so there is no train/serve skew. Training is
+separate from evaluation so model quality can be re-measured or compared across
+runs without retraining, and inference is separate from both so the API never
+imports the training loop.
 
 ## Setup
 
@@ -25,113 +53,111 @@ requirements.txt
 pip install -r requirements.txt
 ```
 
-Requires Python 3.9+ with `numpy`, `matplotlib`, `scikit-learn`, and `torch`.
+Requires Python 3.9+ with `tensorflow` (Keras 3), `scikit-learn`, `matplotlib`,
+`pillow`, `fastapi`, and `uvicorn`.
 
 ## Data
 
-The four standard MNIST IDX files are expected under `data/` (the loader tolerates
-both the flat and the nested Kaggle-archive folder layout):
+The four standard MNIST IDX files live under `data/archive (1)/` (the loader
+tolerates both the flat and the nested Kaggle-archive folder layout) and are
+committed to the repo, so everything runs out of the box after cloning:
 
 - `train-images.idx3-ubyte`, `train-labels.idx1-ubyte`
 - `t10k-images.idx3-ubyte`, `t10k-labels.idx1-ubyte`
 
-These binaries are committed to the repo, so the EDA runs out of the box after cloning.
-
-## Run the EDA
-
-From the repo root:
+## 1. Explore the data (optional but recommended)
 
 ```bash
-# Uses the bundled data/ dir by default; add --tsne for the non-linear cluster plot
 python -m src.eda.run_eda --tsne
-
-# Or point at a different data dir / output dir / seed
-python -m src.eda.run_eda --data-dir "data/archive (1)" --out-dir eda_outputs --tsne --seed 0
 ```
 
-This writes `eda_outputs/EDA_REPORT.md` and `eda_outputs/figures/*.png`. The run is
-idempotent and only touches the output directory.
+Writes `eda_outputs/EDA_REPORT.md` + figures (class balance, ink profiles,
+duplicates/leakage, PCA/t-SNE, outliers, modeling recommendations).
 
-### What the pipeline covers
-
-1. Integrity & schema — shapes, dtypes, value ranges, NaNs, label/image alignment
-2. Class distribution & imbalance ratio (train + test)
-3. Representative sample grid (10 per digit)
-4. Per-class mean & std "average digit" images
-5. Pixel-intensity profile & sparsity
-6. Ink (foreground pixel count) per class
-7. Exact-duplicate detection + train→test leakage check
-8. Train vs. test mean-image drift
-9. PCA: cumulative explained variance + 2-D scatter
-10. t-SNE non-linear cluster view (optional, `--tsne`)
-11. Furthest-from-centroid outliers per class (mislabel eyeballing)
-12. Concrete modeling recommendations
-
-## Train the ANN
-
-From the repo root (run the EDA first to sanity-check the data):
+## 2. Train
 
 ```bash
-# Sensible defaults: MLP 784→256→128→10, ReLU + dropout 0.2 + weight decay 1e-4,
-# Adam lr 1e-3, batch 128, up to 30 epochs with early stopping on val loss.
-python -m src.model.train_ann
+# Defaults: MLP 784->256->128->10, ReLU + dropout 0.2 + L2 1e-4,
+# Adam lr 1e-3, batch 128, up to 30 epochs, early stopping on val loss.
+python -m scripts.train
 
-# Override any hyperparameter
-python -m src.model.train_ann --hidden 512,256,128 --dropout 0.3 --epochs 50
-python -m src.model.train_ann --data-dir "data/archive (1)" --out-dir model_outputs --device cpu
+# Override any hyperparameter (every flag maps to a Config field)
+python -m scripts.train --hidden 512,256,128 --dropout 0.3 --epochs 50
+python -m scripts.train --data-dir "data/archive (1)" --out-dir model_outputs
 ```
 
-This writes `model_outputs/TRAINING_REPORT.md`, `best_model.pt`, `metrics.json`,
-`training_history.csv`, and `figures/{learning_curves,confusion_matrix}.png`. The
-run is idempotent and only touches the output directory.
+The pipeline: flatten 28×28→784 + normalize → stratified 10% val split → build &
+compile the MLP → fit with early stopping (best weights restored) → evaluate on
+val and the held-out test set. Writes to `model_outputs/`:
+`best_model.keras`, `metrics.json`, `training_history.csv`,
+`TRAINING_REPORT.md`, and `figures/{learning_curves,confusion_matrix}.png`.
 
-### What the pipeline does
+Every knob can also be set via `MNIST_`-prefixed env vars (e.g. `MNIST_EPOCHS=50`).
 
-1. **Preprocess** — flatten 28×28→784, normalize pixels `/255` → [0, 1] float32
-2. **Stratified 10% validation split** — every digit represented proportionally;
-   the official 10k test set is reserved for one final unbiased pass
-3. **Build** — regularized MLP: `[Linear→ReLU→Dropout] × N → 10-way logit head`
-4. **Train** — Adam + cross-entropy, tracking train/val loss & accuracy per epoch
-5. **Regularize against overfit** — dropout + weight decay + early stopping on val
-   loss with best-weight restore (three independent defenses)
-6. **Evaluate** — restored best model on val and test; test confusion matrix
-
-A dense MLP plateaus around **~98% test accuracy** (the current run reaches 98.2%);
-a CNN is the next step past ~99%. Design rationale for every hyperparameter lives in
-`.claude/skills/mnist-ann/references/ann_design_notes.md`.
-
-### Evaluate the model
-
-Training already reports test accuracy + a confusion matrix. For a deeper, retrain-free
-evaluation of the saved model (per-class precision/recall/F1, macro/weighted averages,
-ranked confusions, and a gallery of actual misclassified digits):
+## 3. Evaluate
 
 ```bash
-python -m src.model.evaluate
-python -m src.model.evaluate --model-path model_outputs/best_model.pt --data-dir "data/archive (1)"
+python -m scripts.evaluate
 ```
 
-This writes `model_outputs/EVALUATION_REPORT.md`, `evaluation.json`, and
-`figures/{confusion_matrix,misclassified}.png`. It loads `best_model.pt` and runs only
-the test set — no training — so model quality can be re-measured or compared across runs.
+Loads `best_model.keras` (no retraining) and writes `EVALUATION_REPORT.md`,
+`evaluation.json`, and `figures/{confusion_matrix,misclassified}.png` —
+per-class precision/recall/F1, macro/weighted averages, ranked confusions, and a
+gallery of the actual misclassified digits.
 
-### Reloading the trained model
+## 4. Serve the API + UI
+
+```bash
+uvicorn api.main:app --reload          # http://127.0.0.1:8000
+# or: python -m api.main
+```
+
+The model loads once at startup. Open `http://127.0.0.1:8000/` for the
+draw-a-digit UI, or `http://127.0.0.1:8000/docs` for interactive OpenAPI docs.
+
+| Method | Path              | Body                                   | Returns |
+|--------|-------------------|----------------------------------------|---------|
+| GET    | `/health`         | —                                      | liveness + whether the model is loaded |
+| POST   | `/predict`        | multipart image file (any size)        | `{digit, confidence, probabilities}` |
+| POST   | `/predict/canvas` | JSON `{pixels: [...], auto_orient}`     | `{digit, confidence, probabilities}` |
+| GET    | `/`               | —                                      | the web UI |
+
+`/predict` accepts a PNG/JPG of any size (grayscaled + resized server-side).
+`/predict/canvas` takes a row-major grayscale array (784 values, or any N²
+square that the server downsamples). `Predictor` auto-orients dark-on-light
+input to MNIST's white-on-black convention.
+
+Example:
+
+```bash
+curl -F "file=@my_digit.png" http://127.0.0.1:8000/predict
+```
+
+## Using the library directly
 
 ```python
-import torch
-from src.model import MLP, preprocess
+from mnist_classifier import Predictor, load_config
 
-ckpt = torch.load("model_outputs/best_model.pt")
-c = ckpt["config"]
-model = MLP(c["in_dim"], c["hidden"], c["n_classes"], c["dropout"])
-model.load_state_dict(ckpt["state_dict"]); model.eval()
-# X = preprocess(raw_images_N_28_28); logits = model(torch.from_numpy(X))
+predictor = Predictor.from_config(load_config())
+result = predictor.predict(image_28x28_or_any_size)   # numpy array
+print(result.digit, result.confidence)                # e.g. 7, 0.998
 ```
-
-## Reusing the loader in modeling code
 
 ```python
-from src.eda import load_mnist
+# Or run the pipelines programmatically
+from mnist_classifier.config import load_config
+from mnist_classifier.training import train, evaluate
 
-X_train, y_train, X_test, y_test = load_mnist("data/archive (1)")
+cfg = load_config(epochs=50, dropout=0.3)
+train(cfg)
+evaluate(cfg)
 ```
+
+## Notes
+
+- `model_outputs/` is gitignored — the model is a build artifact. **Train before
+  serving**, or the API stays up but `/predict*` returns 503 (and `/health`
+  reports `model_loaded: false`).
+- An MLP plateaus around ~98% on MNIST; a CNN is the next step past ~99%. Design
+  rationale for the hyperparameters lives in
+  `.claude/skills/mnist-ann/references/ann_design_notes.md`.

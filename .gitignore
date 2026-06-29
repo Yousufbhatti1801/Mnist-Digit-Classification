@@ -1,15 +1,39 @@
 # Generated EDA artifacts (regenerate with: python -m src.eda.run_eda --tsne)
 eda_outputs/
 
-# Generated model artifacts (regenerate with: python -m src.model.train_ann)
+# Generated model artifacts (regenerate with: python -m scripts.train)
+# NOTE: the API loads model_outputs/best_model.keras at startup — train before serving.
 model_outputs/
+
+# Backups / scratch models
+*.keras.bak
+*_model_backup.keras
+
+# Data dumps & raw exports (the committed MNIST IDX files under data/archive (1)/
+# are intentionally tracked; these patterns block accidental large/raw additions).
+*.xlsx
+*.csv
+*.zip
+*.gz
+*.tar
+*.parquet
+# (MNIST IDX files are tracked; un-ignore them explicitly in case a broad rule is added later)
+!data/archive (1)/*.idx*-ubyte
 
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
 .venv/
 venv/
+env/
 .ipynb_checkpoints/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
 
-# OS
+# OS / editor
 .DS_Store
+.idea/
+.vscode/
+*.swp
